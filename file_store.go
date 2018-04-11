@@ -132,7 +132,7 @@ DONE:
 	}
 }
 
-func (self *FileStore) Write(data []byte) error {
+func (self *FileStore) Write(data []byte) (int, error) {
 	self.Lock()
 	defer self.Unlock()
 	curDate := time.Now().Format("20060102")
@@ -154,17 +154,17 @@ func (self *FileStore) Write(data []byte) error {
 		var err error
 		self.writeFile, err = os.OpenFile(fileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 	writeBytes, err := self.writeFile.Write(data)
 	if err != nil {
-		return err
+		return writeBytes, err
 	}
 	self.writePos += int64(writeBytes)
-	return nil
+	return writeBytes, nil
 }
 
-func (self *FileStore) WriteLine(data []byte) error {
+func (self *FileStore) WriteLine(data []byte) (int, error) {
 	return self.Write(append(data, '\n'))
 }
