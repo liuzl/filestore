@@ -24,27 +24,19 @@ type FileStore struct {
 	writePos     int64
 	wg           sync.WaitGroup
 	exitChan     chan int32
-	dirLocker    *DirLocker
 	sync.Mutex
 }
 
 func NewFileStore(dir string) (*FileStore, error) {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		err = os.MkdirAll(dir, 0700)
-		if err != nil {
+		if err = os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
 		}
-	}
-	dirLocker := NewDirLocker()
-	err := dirLocker.TryLockDir(dir)
-	if err != nil {
-		return nil, err
 	}
 	fs := &FileStore{
 		fileDir:      dir,
 		fileMaxBytes: maxDefault,
 		exitChan:     make(chan int32),
-		dirLocker:    dirLocker,
 	}
 	if err := fs.setup(); err != nil {
 		return nil, err
@@ -62,7 +54,6 @@ func (self *FileStore) Close() {
 		self.writeFile.Sync()
 		self.writeFile.Close()
 	}
-	self.dirLocker.UnlockDir(self.fileDir)
 }
 
 func (self *FileStore) setup() error {
@@ -152,8 +143,8 @@ func (self *FileStore) Write(data []byte) (int, error) {
 		fileName := filepath.Join(self.fileDir,
 			fmt.Sprintf("%s%06d.dat", self.writeDate, self.writeSeq))
 		var err error
-		self.writeFile, err = os.OpenFile(fileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
-		if err != nil {
+		if self.writeFile, err = os.OpenFile(
+			fileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600); err != nil {
 			return 0, err
 		}
 	}
