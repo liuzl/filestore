@@ -1,10 +1,3 @@
-# filestore
-
-An append only file store, files are splited by time and size.
-
-## Usage
-
-```go
 package main
 
 import (
@@ -26,4 +19,3 @@ func main() {
 	}
 	fs.Close()
 }
-```
