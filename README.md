@@ -1,6 +1,6 @@
 # filestore
 
-An append only file store, files are splited by time and size.
+An append only file store, files are splited by time and size. Time interval could be `day` or `hour`, `day` by default. 
 
 ## Usage
 
@@ -14,7 +14,8 @@ import (
 )
 
 func main() {
-	fs, err := filestore.NewFileStore("db")
+	//fs, err := filestore.NewFileStore("db")
+	fs, err := filestore.NewFileStorePro("db", "hour")
 	if err != nil {
 		log.Fatal(err)
 	}
