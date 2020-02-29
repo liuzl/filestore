@@ -16,6 +16,7 @@ const (
 )
 
 type FileStore struct {
+	splitBy      string
 	fileDir      string
 	fileMaxBytes int64
 	writeFile    *os.File
@@ -45,47 +46,78 @@ func NewFileStore(dir string) (*FileStore, error) {
 	return fs, nil
 }
 
-func (self *FileStore) Close() {
-	self.Lock()
-	defer self.Unlock()
-	close(self.exitChan)
-	self.wg.Wait()
-	if self.writeFile != nil {
-		self.writeFile.Sync()
-		self.writeFile.Close()
+func NewFileStorePro(dir, splitBy string) (*FileStore, error) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err = os.MkdirAll(dir, 0700); err != nil {
+			return nil, err
+		}
+	}
+	fs := &FileStore{
+		splitBy:      splitBy,
+		fileDir:      dir,
+		fileMaxBytes: maxDefault,
+		exitChan:     make(chan int32),
+	}
+	if err := fs.setup(); err != nil {
+		return nil, err
+	}
+	go fs.ioLoop()
+	return fs, nil
+}
+
+func (f *FileStore) Close() {
+	f.Lock()
+	defer f.Unlock()
+	close(f.exitChan)
+	f.wg.Wait()
+	if f.writeFile != nil {
+		f.writeFile.Sync()
+		f.writeFile.Close()
 	}
 }
 
-func (self *FileStore) setup() error {
-	lastWriteDate, lastWriteSeq, err := self.resolveFileName(self.lastFileName())
-	curDate := time.Now().Format("20060102")
+func (f *FileStore) setup() error {
+	lastWriteDate, lastWriteSeq, err := f.resolveFileName(f.lastFileName())
+	now := time.Now()
+	curDate := now.Format("20060102")
+	if f.splitBy == "hour" {
+		curDate = now.Format("2006010215")
+	}
 	if err != nil || lastWriteDate < curDate {
-		self.writeDate = curDate
-		self.writeSeq = 0
-		self.writePos = 0
+		f.writeDate = curDate
+		f.writeSeq = 0
+		f.writePos = 0
 		return nil
 	}
-	self.writeDate = curDate
-	self.writeSeq = lastWriteSeq + 1
-	self.writePos = 0
+	f.writeDate = curDate
+	f.writeSeq = lastWriteSeq + 1
+	f.writePos = 0
 	return nil
 }
 
-func (self *FileStore) resolveFileName(name string) (string, uint32, error) {
+func (f *FileStore) resolveFileName(name string) (string, uint32, error) {
 	if len(name) != 18 {
 		return "", 0, fmt.Errorf("invalid file name: ", name)
 	}
-	date := name[:8]
-	seq, err := strconv.Atoi(name[8:14])
+	var date string
+	var seq int
+	var err error
+	if f.splitBy == "hour" {
+		date = name[:10]
+		seq, err = strconv.Atoi(name[10:14])
+	} else {
+		date = name[:8]
+		seq, err = strconv.Atoi(name[8:14])
+	}
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid file name: ", name)
 	}
 	return date, uint32(seq), nil
 }
 
-func (self *FileStore) lastFileName() string {
+func (f *FileStore) lastFileName() string {
 	name := ""
-	files, err := ioutil.ReadDir(self.fileDir)
+	files, err := ioutil.ReadDir(f.fileDir)
 	if err != nil {
 		return ""
 	}
@@ -103,59 +135,69 @@ func (self *FileStore) lastFileName() string {
 	return name
 }
 
-func (self *FileStore) ioLoop() {
-	self.wg.Add(1)
-	defer self.wg.Done()
+func (f *FileStore) ioLoop() {
+	f.wg.Add(1)
+	defer f.wg.Done()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 DONE:
 	for {
 		select {
 		case <-ticker.C:
-			self.Lock()
-			if self.writeFile != nil {
-				self.writeFile.Sync()
+			f.Lock()
+			if f.writeFile != nil {
+				f.writeFile.Sync()
 			}
-			self.Unlock()
-		case <-self.exitChan:
+			f.Unlock()
+		case <-f.exitChan:
 			break DONE
 		}
 	}
 }
 
-func (self *FileStore) Write(data []byte) (int, error) {
-	self.Lock()
-	defer self.Unlock()
-	curDate := time.Now().Format("20060102")
-	if self.writeDate < curDate {
-		self.writeFile.Close()
-		self.writeFile = nil
-		self.writeDate = curDate
-		self.writeSeq = 0
-		self.writePos = 0
-	} else if self.writePos > self.fileMaxBytes {
-		self.writeFile.Close()
-		self.writeFile = nil
-		self.writeSeq += 1
-		self.writePos = 0
+func (f *FileStore) Write(data []byte) (int, error) {
+	f.Lock()
+	defer f.Unlock()
+	now := time.Now()
+	curDate := now.Format("20060102")
+	if f.splitBy == "hour" {
+		curDate = now.Format("2006010215")
 	}
-	if self.writeFile == nil {
-		fileName := filepath.Join(self.fileDir,
-			fmt.Sprintf("%s%06d.dat", self.writeDate, self.writeSeq))
+	if f.writeDate < curDate {
+		f.writeFile.Close()
+		f.writeFile = nil
+		f.writeDate = curDate
+		f.writeSeq = 0
+		f.writePos = 0
+	} else if f.writePos > f.fileMaxBytes {
+		f.writeFile.Close()
+		f.writeFile = nil
+		f.writeSeq += 1
+		f.writePos = 0
+	}
+	if f.writeFile == nil {
+		var fileName string
+		if f.splitBy == "hour" {
+			fileName = filepath.Join(f.fileDir,
+				fmt.Sprintf("%s%04d.dat", f.writeDate, f.writeSeq))
+		} else {
+			fileName = filepath.Join(f.fileDir,
+				fmt.Sprintf("%s%06d.dat", f.writeDate, f.writeSeq))
+		}
 		var err error
-		if self.writeFile, err = os.OpenFile(
+		if f.writeFile, err = os.OpenFile(
 			fileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600); err != nil {
 			return 0, err
 		}
 	}
-	writeBytes, err := self.writeFile.Write(data)
+	writeBytes, err := f.writeFile.Write(data)
 	if err != nil {
 		return writeBytes, err
 	}
-	self.writePos += int64(writeBytes)
+	f.writePos += int64(writeBytes)
 	return writeBytes, nil
 }
 
-func (self *FileStore) WriteLine(data []byte) (int, error) {
-	return self.Write(append(data, '\n'))
+func (f *FileStore) WriteLine(data []byte) (int, error) {
+	return f.Write(append(data, '\n'))
 }

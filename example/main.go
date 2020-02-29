@@ -7,7 +7,8 @@ import (
 )
 
 func main() {
-	fs, err := filestore.NewFileStore("db")
+	//fs, err := filestore.NewFileStore("db")
+	fs, err := filestore.NewFileStorePro("db", "hour")
 	if err != nil {
 		log.Fatal(err)
 	}
